@@ -4,13 +4,14 @@ import pytest
 
 from gpjax.utils import (
     I,
+    as_constant,
     concat_dictionaries,
     merge_dictionaries,
     sort_dictionary,
     standardise,
-add_parameter,
+    add_parameter,
     unstandardise,
-chol_log_det
+    chol_log_det,
 )
 
 
@@ -24,7 +25,8 @@ def test_identity(n):
 def test_concat_dict():
     d1 = {"a": 1, "b": 2}
     d2 = {"c": 3, "d": 4}
-    d = concat_dictionaries(d1, d2)
+    d = concat_dictionaries([d1, d2])
+    print(d)
     assert list(d.keys()) == ["a", "b", "c", "d"]
     assert list(d.values()) == [1, 2, 3, 4]
 
@@ -46,8 +48,8 @@ def test_sort_dict():
 
 def test_add_parameter():
     base_dict = {"b": 1, "a": 2}
-    expanded_dict = add_parameter(base_dict, ('c', 3))
-    assert list(expanded_dict.keys()) == ['a', 'b', 'c']
+    expanded_dict = add_parameter(base_dict, ("c", 3))
+    assert list(expanded_dict.keys()) == ["a", "b", "c"]
     assert list(expanded_dict.values()) == [2, 1, 3]
 
 
@@ -66,7 +68,17 @@ def test_standardise():
 
 
 def test_log_det():
-    A = jnp.array([[1., 0.2], [0.2, 1.]])
+    A = jnp.array([[1.0, 0.2], [0.2, 1.0]])
     chol_det = chol_log_det(A)
     log_det = jnp.linalg.slogdet(A)[1]
     assert pytest.approx(chol_det, rel=16) == log_det
+
+
+def test_as_constant():
+    base = {"a": 1, "b": 2, "c": 3}
+    b1, s1 = as_constant(base, ["a"])
+    b2, s2 = as_constant(base, ["a", "b"])
+    assert list(b1.keys()) == ["b", "c"]
+    assert list(s1.keys()) == ["a"]
+    assert list(b2.keys()) == ["c"]
+    assert list(s2.keys()) == ["a", "b"]

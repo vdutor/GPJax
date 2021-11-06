@@ -6,7 +6,6 @@ from tensorflow_probability.substrates.jax import distributions as tfd
 
 from ..gps import ConjugatePosterior, NonConjugatePosterior
 from ..kernels import gram
-from ..likelihoods import link_function
 from ..parameters.priors import evaluate_prior, prior_checks
 from ..types import Array, Dataset
 from ..utils import I, concat_dictionaries
@@ -26,11 +25,13 @@ def marginal_ll(
     Returns: A multivariate normal distribution
     """
 
-    def mll(params: dict, training: Dataset, priors: dict = None, static_params: dict = None):
+    def mll(
+        params: dict, training: Dataset, priors: dict = None, static_params: dict = None
+    ):
         x, y = training.X, training.y
         params = transform(params)
         if static_params:
-            params = concat_dictionaries(params, transform(static_params))
+            params = concat_dictionaries([params, transform(static_params)])
         mu = gp.prior.mean_function(x)
         gram_matrix = gram(gp.prior.kernel, x, params)
         gram_matrix += params["obs_noise"] * I(x.shape[0])
@@ -39,7 +40,9 @@ def marginal_ll(
 
         log_prior_density = evaluate_prior(params, priors)
         constant = jnp.array(-1.0) if negative else jnp.array(1.0)
-        return constant * (random_variable.log_prob(y.squeeze()).mean() + log_prior_density)
+        return constant * (
+            random_variable.log_prob(y.squeeze()).mean() + log_prior_density
+        )
 
     return mll
 
@@ -61,8 +64,8 @@ def marginal_ll(
         n = training.n
         params = transform(params)
         if static_params:
-            params = concat_dictionaries(params, transform(static_params))
-        link = link_function(gp.likelihood)
+            params = concat_dictionaries([params, transform(static_params)])
+        link = gp.likelihood.link_function
         gram_matrix = gram(gp.prior.kernel, x, params)
         gram_matrix += I(n) * jitter
         L = jnp.linalg.cholesky(gram_matrix)

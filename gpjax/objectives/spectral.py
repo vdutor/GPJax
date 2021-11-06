@@ -19,7 +19,7 @@ def marginal_ll(
         params = transform(params)
         x, y = training.X, training.y
         if static_params:
-            params = concat_dictionaries(params, static_params)
+            params = concat_dictionaries([params, static_params])
         m = gp.prior.kernel.num_basis
         phi = gp.prior.kernel._build_phi(x, params)
         A = (params["variance"] / m) * jnp.matmul(jnp.transpose(phi), phi) + params[
@@ -36,7 +36,10 @@ def marginal_ll(
         out = (
             0.5
             / params["obs_noise"]
-            * (jnp.sum(jnp.square(y)) - params["variance"] / m * jnp.sum(jnp.square(Rtiphity)))
+            * (
+                jnp.sum(jnp.square(y))
+                - params["variance"] / m * jnp.sum(jnp.square(Rtiphity))
+            )
         )
         n = x.shape[0]
 

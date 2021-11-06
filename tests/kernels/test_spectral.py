@@ -4,11 +4,9 @@ import pytest
 from tensorflow_probability.substrates.jax import distributions as tfd
 
 from gpjax.kernels import RBF
+from gpjax.core import initialise
 from gpjax.kernels.spectral import (
     SpectralRBF,
-    initialise,
-    sample_frequencies,
-    spectral_density,
     to_spectral,
 )
 
@@ -17,7 +15,7 @@ from gpjax.kernels.spectral import (
 def test_initialise(n_basis):
     key = jr.PRNGKey(123)
     kernel = SpectralRBF(num_basis=n_basis)
-    params = initialise(key, kernel)
+    params = initialise(kernel)
     assert list(params.keys()) == ["basis_fns", "lengthscale", "variance"]
     for v in params.values():
         assert v.dtype == jnp.float64
@@ -34,17 +32,15 @@ def test_to_spectral(n_basis):
 
 def test_spectral_density():
     kernel = SpectralRBF(num_basis=10)
-    sdensity = spectral_density(kernel)
+    sdensity = kernel.spectral_density
     assert isinstance(sdensity, tfd.Normal)
 
 
-@pytest.mark.parametrize("n_freqs", [1, 2, 5])
-def test_sample_frequencies(n_freqs):
+def test_call():
     key = jr.PRNGKey(123)
-    kernel = SpectralRBF(num_basis=n_freqs)
-    sdensity = spectral_density(kernel)
-    omega = sample_frequencies(key, kernel, n_freqs, 1)
-    omegad = sample_frequencies(key, sdensity, n_freqs, 1)
-    assert (omegad == omega).all()
-    assert omegad.dtype == jnp.float64
-    assert omega.dtype == jnp.float64
+    kernel = SpectralRBF(num_basis=10)
+    params = initialise(kernel)
+    x, y = jnp.array([[1.0]]), jnp.array([[0.5]])
+    point_corr = kernel(x, y, params)
+    assert isinstance(point_corr, jnp.DeviceArray)
+    assert point_corr.shape == (1, 1)

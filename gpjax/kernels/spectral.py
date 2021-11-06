@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Dict
 
 import jax.numpy as jnp
 from chex import dataclass
@@ -11,17 +11,33 @@ from ..types import Array
 from ..utils import I, sort_dictionary
 from .base import Kernel
 from .utils import scale, stretch
+from ..config import get_defaults
 
 
 @dataclass(repr=False)
 class SpectralKernel:
     num_basis: int
+    spectral_density: tfd.Distribution = None
 
 
 @dataclass(repr=False)
 class SpectralRBF(Kernel, SpectralKernel):
     name: Optional[str] = "Spectral RBF"
     stationary: str = True
+
+    def __post_init__(self):
+        config = get_defaults()
+        # Define kernel's spectral density and sample frequencies
+        self.spectral_density = tfd.Normal(loc=jnp.array(0.0), scale=jnp.array(1.0))
+        freqs = self.spectral_density.sample(
+            sample_shape=(self.num_basis, self.ndims), seed=config.seed
+        )
+        # Store parameters
+        self.parameters: Dict[str, Array] = {
+            "basis_fns": freqs,
+            "lengthscale": jnp.array([1.0] * self.ndims),
+            "variance": jnp.array([1.0]),
+        }
 
     def __repr__(self):
         return f"{self.name}:\n\t Number of basis functions: {self.num_basis}\n\t Stationary: {self.stationary} \n\t ARD structure: {self.ard}"
@@ -39,33 +55,3 @@ class SpectralRBF(Kernel, SpectralKernel):
 @dispatch(RBF, int)
 def to_spectral(kernel: RBF, num_basis: int):
     return SpectralRBF(num_basis=num_basis)
-
-
-@dispatch(SpectralRBF)
-def spectral_density(kernel: SpectralRBF) -> tfd.Distribution:
-    return tfd.Normal(loc=jnp.array(0.0), scale=jnp.array(1.0))
-
-
-@dispatch(jnp.DeviceArray, tfd.Distribution, int, int)
-def sample_frequencies(
-    key, density: tfd.Distribution, n_frequencies: int, input_dimension: int
-) -> jnp.DeviceArray:
-    return density.sample(sample_shape=(n_frequencies, input_dimension), seed=key)
-
-
-@dispatch(jnp.DeviceArray, SpectralKernel, int, int)
-def sample_frequencies(
-    key, kernel: SpectralKernel, n_frequencies: int, input_dimension: int
-) -> jnp.DeviceArray:
-    density = spectral_density(kernel)
-    return density.sample(sample_shape=(n_frequencies, input_dimension), seed=key)
-
-
-@dispatch(jnp.DeviceArray, SpectralRBF)
-def initialise(key: jnp.DeviceArray, kernel: SpectralRBF):
-    basis_init = sample_frequencies(key, kernel, kernel.num_basis, kernel.ndims)
-    return {
-        "basis_fns": basis_init,
-        "lengthscale": jnp.array([1.0] * kernel.ndims),
-        "variance": jnp.array([1.0]),
-    }

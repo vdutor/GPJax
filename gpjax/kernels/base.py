@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Dict
 
 import jax.numpy as jnp
 from chex import dataclass
@@ -12,6 +12,7 @@ from .utils import scale, stretch
 
 @dataclass(repr=False)
 class Kernel:
+    parameters = {}
     ndims: Optional[int] = 1
     stationary: Optional[bool] = False
     spectral: Optional[bool] = False
@@ -35,16 +36,17 @@ class RBF(Kernel):
     spectral: Optional[bool] = False
     name: Optional[str] = "Radial basis function kernel"
 
+    def __post_init__(self):
+        self.parameters = {
+            "lengthscale": jnp.repeat(jnp.array([1.0]), self.ndims),
+            "variance": jnp.array([1.0]),
+        }
+
     def __call__(self, x: jnp.DeviceArray, y: jnp.DeviceArray, params: dict) -> Array:
         x = scale(x, params["lengthscale"])
         y = scale(y, params["lengthscale"])
         K = stretch(jnp.exp(-0.5 * squared_distance(x, y)), params["variance"])
         return K.squeeze()
-
-
-@dispatch(RBF)
-def initialise(kernel: RBF):
-    return {"lengthscale": jnp.array([1.0] * kernel.ndims), "variance": jnp.array([1.0])}
 
 
 def squared_distance(x: Array, y: Array):

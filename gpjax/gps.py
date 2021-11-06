@@ -3,6 +3,9 @@ from typing import Optional
 from chex import dataclass
 from multipledispatch import dispatch
 
+from gpjax import parameters
+from gpjax.utils import concat_dictionaries
+
 from .kernels import Kernel
 from .kernels.spectral import SpectralKernel
 from .likelihoods import (
@@ -12,7 +15,7 @@ from .likelihoods import (
     NonConjugateLikelihoodType,
 )
 from .mean_functions import MeanFunction, Zero
-
+from .parameters.base import initialise
 
 ##############
 # GP priors
@@ -21,7 +24,13 @@ from .mean_functions import MeanFunction, Zero
 class Prior:
     kernel: Kernel
     mean_function: Optional[MeanFunction] = Zero()
+    parameters = {}
     name: Optional[str] = "Prior"
+
+    def __post_init__(self):
+        self.parameters = concat_dictionaries(
+            [i.parameters for i in [self.mean_function, self.kernel]]
+        )
 
     @dispatch(Gaussian)
     def __mul__(self, other: Gaussian):
@@ -42,11 +51,20 @@ class Prior:
 class Posterior:
     prior: Prior
     likelihood: Likelihood
+    parameters = {}
     name: Optional[str] = "Posterior"
+
+    def __post_init__(self):
+        self.parameters = concat_dictionaries(
+            [
+                i.parameters
+                for i in [self.likelihood, self.prior.mean_function, self.prior.kernel]
+            ]
+        )
 
 
 @dataclass
-class ConjugatePosterior:
+class ConjugatePosterior(Posterior):
     prior: Prior
     likelihood: Gaussian
     name: Optional[str] = "ConjugatePosterior"

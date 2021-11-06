@@ -1,7 +1,8 @@
 import jax.numpy as jnp
 import pytest
 
-from gpjax.kernels import RBF, cross_covariance, gram, initialise
+from gpjax.kernels import RBF, cross_covariance, gram
+from gpjax.core import initialise
 from gpjax.utils import I
 
 
@@ -25,6 +26,15 @@ def test_cross_covariance(n1, n2):
     params = initialise(RBF())
     kernel_matrix = cross_covariance(RBF(), x2, x1, params)
     assert kernel_matrix.shape == (n1, n2)
+
+
+def test_call():
+    kernel = RBF()
+    params = initialise(kernel)
+    x, y = jnp.array([[1.0]]), jnp.array([[0.5]])
+    point_corr = kernel(x, y, params)
+    assert isinstance(point_corr, jnp.DeviceArray)
+    assert point_corr.shape == ()
 
 
 @pytest.mark.parametrize("dim", [1, 2, 5])

@@ -1,7 +1,8 @@
 import jax.numpy as jnp
 import pytest
 
-from gpjax.mean_functions import Zero, initialise
+from gpjax.mean_functions import Zero
+from gpjax.core import initialise
 
 
 @pytest.mark.parametrize("dim", [1, 2, 5])
