@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Union
 
 import jax.numpy as jnp
 from chex import dataclass
@@ -7,14 +7,18 @@ from jax.interpreters.partial_eval import DynamicJaxprTracer
 from jax.interpreters.pxla import ShardedDeviceArray
 
 NoneType = type(None)
-Array = (
-    jnp.ndarray,
-    ShardedDeviceArray,
-    jnp.DeviceArray,
-    JVPTracer,
-    DynamicJaxprTracer,
-)
-Arrays = Union[jnp.ndarray, ShardedDeviceArray, jnp.DeviceArray, JVPTracer, DynamicJaxprTracer]
+Array = jnp.ndarray
+Arrays = jnp.ndarray
+# Array = (
+#     jnp.ndarray,
+#     ShardedDeviceArray,
+#     jnp.DeviceArray,
+#     JVPTracer,
+#     DynamicJaxprTracer,
+# )
+# Arrays = Union[
+#     jnp.ndarray, ShardedDeviceArray, jnp.DeviceArray, JVPTracer, DynamicJaxprTracer
+# ]
 
 
 @dataclass(repr=False)
@@ -23,7 +27,9 @@ class Dataset:
     y: Arrays
 
     def __repr__(self) -> str:
-        return f"- Number of datapoints: {self.X.shape[0]}\n- Dimension: {self.X.shape[1]}"
+        return (
+            f"- Number of datapoints: {self.X.shape[0]}\n- Dimension: {self.X.shape[1]}"
+        )
 
     @property
     def n(self) -> int:
@@ -51,18 +57,18 @@ def verify_dataset(ds: Dataset) -> None:
         ), f"Number of inputs must equal the number of outputs. \nCurrent counts:\n- X: {ds.X.shape[0]}\n- y: {ds.y.shape[0]}"
 
 
-@dataclass(repr=False)
-class SparseDataset(Dataset):
-    """
-    Base class for the inducing inputs used for sparse GP schemes
-    """
-    Z: Arrays = None
+# @dataclass(repr=False)
+# class SparseDataset(Dataset):
+#     """
+#     Base class for the inducing inputs used for sparse GP schemes
+#     """
+#     Z: Arrays = None
 
-    @property
-    def n_inducing(self) -> int:
-        return self.Z.shape[0]
+#     @property
+#     def n_inducing(self) -> int:
+#         return self.Z.shape[0]
 
-    def __repr__(self) -> str:
-        return (
-            f"- Number of datapoints: {self.X.shape[0]}\n- Dimension: {self.X.shape[1]}\n- Number of inducing points: {self.n_inducing}"
-        )
+#     def __repr__(self) -> str:
+#         return (
+#             f"- Number of datapoints: {self.X.shape[0]}\n- Dimension: {self.X.shape[1]}\n- Number of inducing points: {self.n_inducing}"
+#         )

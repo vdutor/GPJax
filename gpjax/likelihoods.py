@@ -1,19 +1,18 @@
-from typing import Callable, Dict, Optional, Union
+from typing import Callable, Optional
 
 import jax.numpy as jnp
-from chex import dataclass
-from multipledispatch import dispatch
+from dataclasses import dataclass
 from tensorflow_probability.substrates.jax import distributions as tfd
 
-from .types import Array
+from treeo import Tree, field
 from .utils import identity
+from .parameters import PositiveParameter, ShiftedPositive
 
 
 @dataclass(repr=False)
-class Likelihood:
-    link_function: Callable[[jnp.DeviceArray], jnp.DeviceArray] = identity
+class Likelihood(Tree):
+    # link_function: Callable[[jnp.DeviceArray], jnp.DeviceArray] = identity
     name: Optional[str] = "Likelihood"
-    parameters = {}
 
     def __repr__(self):
         return f"{self.name} likelihood function"
@@ -21,18 +20,21 @@ class Likelihood:
 
 @dataclass(repr=False)
 class Gaussian(Likelihood):
+    # link_function: Callable[[jnp.DeviceArray], jnp.DeviceArray] = identity
     name: Optional[str] = "Gaussian"
-    parameters = {"obs_noise": jnp.array([1.0])}
+    obs_noise: jnp.array = field(
+        default=jnp.array([1.0]), node=True, kind=ShiftedPositive
+    )
 
 
 @dataclass(repr=False)
 class Bernoulli(Likelihood):
-    link_function = tfd.ProbitBernoulli
+    # link_function = tfd.ProbitBernoulli
     name: Optional[str] = "Bernoulli"
+    num_datapoints: int = 1
 
 
-@dispatch(Bernoulli)
-def predictive_moments(likelihood: Bernoulli) -> Callable:
+def predictive_moments(likelihood: Likelihood) -> Callable:
     link = likelihood.link_function
 
     def moments(mean: jnp.DeviceArray, variance: jnp.DeviceArray) -> tfd.Distribution:
@@ -42,11 +44,5 @@ def predictive_moments(likelihood: Bernoulli) -> Callable:
     return moments
 
 
-@dataclass(repr=False)
-class Poisson(Likelihood):
-    link_function = jnp.exp
-    name: Optional[str] = "Poisson"
-
-
-NonConjugateLikelihoods = (Bernoulli, Poisson)
-NonConjugateLikelihoodType = Union[Bernoulli, Poisson]
+NonConjugateLikelihoods = Bernoulli
+NonConjugateLikelihoodType = Bernoulli  # Union[Bernoulli]

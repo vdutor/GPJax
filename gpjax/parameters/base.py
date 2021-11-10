@@ -1,61 +1,49 @@
 import jax.numpy as jnp
-from multipledispatch import dispatch
 
-from ..kernels import Kernel
-from ..likelihoods import Likelihood
-from ..mean_functions import MeanFunction
-from ..utils import concat_dictionaries, merge_dictionaries, sort_dictionary
-from typing import Dict
+import tensorflow_probability.substrates.jax as tfp
+from dataclasses import dataclass
+import treeo as to
+import jax
 
 JaxKey = jnp.DeviceArray
 
 
-def initialise(obj) -> Dict:
-    return obj.parameters
+@dataclass
+class Parameter:
+    bijector: tfp.bijectors.Bijector = tfp.bijectors.Softplus()
+
+    def constrain(self, x):
+        return self.bijector.forward(x)
+
+    def unconstrain(self, x):
+        return self.bijector.inverse(x)
 
 
-#####################################
-# Initialise GPs where one or more of the parameter's initialisation is stochastic
-#####################################
+@dataclass(repr=False)
+class PositiveParameter(Parameter):
+    bijector = tfp.bijectors.Softplus()
 
 
-# @dispatch(JaxKey, (ConjugatePosterior, SpectralPosterior))
-# def initialise(key: JaxKey, gp: ConjugatePosterior) -> dict:
-#     meanf = initialise(gp.prior.mean_function)
-#     kernel = concat_dictionaries(initialise(key, gp.prior.kernel), meanf)
-#     all_params = concat_dictionaries(kernel, initialise(gp.likelihood))
-#     return sort_dictionary(all_params)
+@dataclass
+class ShiftedPositive(Parameter):
+    shift = tfp.bijectors.Shift(1e-6)
+    splus = tfp.bijectors.Softplus()
+    bijector = tfp.bijectors.Chain([shift, splus])
 
 
-# Helper function for initialising the GP's mean and kernel function
-def _initialise_hyperparams(kernel: Kernel, meanf: MeanFunction) -> dict:
-    return concat_dictionaries((kernel), initialise(meanf))
+def unconstrain_parameters(model):
+    def unconstrain(f):
+        # print(f.kind().unconstrain(f.value))
+        return f.kind().unconstrain(f.value)
+
+    m1 = to.map(unconstrain, model, Parameter, field_info=True)
+
+    return m1
 
 
-##################################################
-# Initialise the GP where all of the initialisations are stochastic
-##################################################
-# @dispatch((ConjugatePosterior, SpectralPosterior))
-# def initialise(gp: ConjugatePosterior) -> dict:
-#     hyps = _initialise_hyperparams(gp.prior.kernel, gp.prior.mean_function)
-#     all_params = concat_dictionaries(hyps, initialise(gp.likelihood))
-#     return sort_dictionary(all_params)
+def constrain_parameters(model):
+    def constrain(f):
+        return f.kind().constrain(f.value)
 
-
-# @dispatch((ConjugatePosterior, SpectralPosterior), object)
-# def initialise(gp: ConjugatePosterior, n_data):
-#     return sort_dictionary(initialise(gp))
-
-
-# @dispatch(NonConjugatePosterior, int)
-# def initialise(gp: NonConjugatePosterior, n_data: int) -> dict:
-#     hyperparams = _initialise_hyperparams(gp.prior.kernel, gp.prior.mean_function)
-#     likelihood = concat_dictionaries(hyperparams, initialise(gp.likelihood))
-#     latent_process = {"latent": jnp.zeros(shape=(n_data, 1))}
-#     return sort_dictionary(concat_dictionaries(likelihood, latent_process))
-
-
-# Helper function to complete a parameter set.
-def complete(params: dict, gp, n_data: int = None) -> dict:
-    full_param_set = initialise(gp, n_data)
-    return sort_dictionary(merge_dictionaries(full_param_set, params))
+    m1 = to.map(constrain, model, Parameter, field_info=True)
+    return m1

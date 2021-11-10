@@ -1,18 +1,16 @@
-from typing import Optional, Dict
+from typing import Optional
 
 import jax.numpy as jnp
-from chex import dataclass
+from dataclasses import dataclass
 from jax import vmap
-from multipledispatch import dispatch
+from treeo import Tree, field
 
 from gpjax.types import Array
-
-from .utils import scale, stretch
+from ..parameters import PositiveParameter
 
 
 @dataclass(repr=False)
-class Kernel:
-    parameters = {}
+class Kernel(Tree):
     ndims: Optional[int] = 1
     stationary: Optional[bool] = False
     spectral: Optional[bool] = False
@@ -29,33 +27,35 @@ class Kernel:
         return True if self.ndims > 1 else False
 
 
-@dataclass(repr=False)
 class RBF(Kernel):
+    lengthscale: Optional[Array] = field(
+        default=jnp.array([1.0]), node=True, kind=PositiveParameter
+    )
+    variance: Optional[Array] = field(
+        default=jnp.array([1.0]), node=True, kind=PositiveParameter
+    )
     ndims: Optional[int] = 1
-    stationary: Optional[bool] = True
+    stationary: Optional[bool] = False
     spectral: Optional[bool] = False
-    name: Optional[str] = "Radial basis function kernel"
+    name: Optional[str] = "RBF"
 
-    def __post_init__(self):
-        self.parameters = {
-            "lengthscale": jnp.repeat(jnp.array([1.0]), self.ndims),
-            "variance": jnp.array([1.0]),
-        }
-
-    def __call__(self, x: jnp.DeviceArray, y: jnp.DeviceArray, params: dict) -> Array:
-        x = scale(x, params["lengthscale"])
-        y = scale(y, params["lengthscale"])
-        K = stretch(jnp.exp(-0.5 * squared_distance(x, y)), params["variance"])
-        return K.squeeze()
+    def __call__(self, x: Array, y: Array):
+        ell = self.lengthscale
+        sigma = self.variance
+        x = x / ell
+        y = y / ell
+        sq_distance = distance(x, y, power=2)
+        val = sigma * jnp.exp(-0.5 * sq_distance)
+        return val.squeeze()
 
 
-def squared_distance(x: Array, y: Array):
-    return jnp.sum((x - y) ** 2)
+def distance(x: jnp.array, y: jnp.array, power: int = 1):
+    return jnp.sum((x - y) ** power)
 
 
-def gram(kernel: Kernel, inputs: Array, params: dict) -> Array:
-    return vmap(lambda x1: vmap(lambda y1: kernel(x1, y1, params))(inputs))(inputs)
+def gram(kernel: Kernel, inputs: Array) -> Array:
+    return vmap(lambda x1: vmap(lambda y1: kernel(x1, y1))(inputs))(inputs)
 
 
-def cross_covariance(kernel: Kernel, x: Array, y: Array, params: dict) -> Array:
-    return vmap(lambda x1: vmap(lambda y1: kernel(x1, y1, params))(x))(y)
+def cross_covariance(kernel: Kernel, x: Array, y: Array) -> Array:
+    return vmap(lambda x1: vmap(lambda y1: kernel(x1, y1))(x))(y)

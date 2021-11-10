@@ -1,12 +1,11 @@
 from copy import deepcopy
-from typing import Tuple, Union, List, Dict
-from collections import ChainMap
+from typing import Tuple
 
 import jax.numpy as jnp
-from jax.scipy.linalg import cho_factor, cho_solve, cholesky
+from jax.scipy.linalg import cholesky
 from multipledispatch import dispatch
 
-from .types import Array, Arrays
+from .types import Array
 
 
 def identity(x: jnp.DeviceArray):
@@ -20,49 +19,6 @@ def I(n: int) -> Array:
     :return: An n x n identity matrix.
     """
     return jnp.eye(n)
-
-
-def concat_dictionaries(dicts: List[Dict]) -> dict:
-    """
-    Append one dictionary below another. If duplicate keys exist, then the key-value pair of the first supplied
-    dictionary will be used.
-    """
-    return sort_dictionary(dict(ChainMap(*dicts)))
-
-
-def merge_dictionaries(base_dict: dict, in_dict: dict) -> dict:
-    """
-    This will return a complete dictionary based on the keys of the first matrix. If the same key should exist in the
-    second matrix, then the key-value pair from the first dictionary will be overwritten. The purpose of this is that
-    the base_dict will be a complete dictionary of values such that an incomplete second dictionary can be used to
-    update specific key-value pairs.
-
-    :param base_dict: Complete dictionary of key-value pairs.
-    :param in_dict: Subset of key-values pairs such that values from this dictionary will take precedent.
-    :return: A merged single dictionary.
-    """
-    for k, v in base_dict.items():
-        if k in in_dict.keys():
-            base_dict[k] = in_dict[k]
-    return base_dict
-
-
-def sort_dictionary(base_dict: dict) -> dict:
-    """
-    Sort a dictionary based on the dictionary's key values.
-
-    :param base_dict: The unsorted dictionary.
-    :return: A dictionary sorted alphabetically on the dictionary's keys.
-    """
-    return dict(sorted(base_dict.items()))
-
-
-def add_parameter(
-    base_dict: dict, key_value: Tuple[str, Union[Arrays, int, float]]
-) -> dict:
-    expanded_dict = deepcopy(base_dict)
-    expanded_dict[key_value[0]] = key_value[1]
-    return sort_dictionary(expanded_dict)
 
 
 @dispatch(jnp.DeviceArray)
