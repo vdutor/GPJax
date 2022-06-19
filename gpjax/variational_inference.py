@@ -1,5 +1,6 @@
 import abc
 from logging import root
+from pickle import FALSE
 from typing import Callable, Dict, Optional
 
 import jax.numpy as jnp
@@ -129,7 +130,7 @@ class StochasticVI(AbstractVariationalInference):
 @dataclass
 class OSGPR(AbstractVariationalInference):
     """
-    Online Sparse Variational GP regression.
+    Online Sparse Variational GP regression (collapsed bound).
 
     Key reference - Bui et al. (2017) Streaming Gaussian process approximations
     """
@@ -143,6 +144,8 @@ class OSGPR(AbstractVariationalInference):
     def __post_init__(self):
         assert isinstance(self.posterior.likelihood, Gaussian)
         self.variational_family_new = self.variational_family
+
+        # Need to assert variational family is AbsractVariationalGaussian -> once natgrads is merged.
 
     def elbo(
         self, transformations: Dict, negative: bool = False
@@ -291,5 +294,105 @@ class OSGPR(AbstractVariationalInference):
             delta1 += jnp.sum(jnp.diag(Sa_inv_Qa) - jnp.diag(Kaa_inv_Qa))
 
             return constant * (log_prob + delta1 + delta2).squeeze()
+
+        return elbo_fn
+
+
+@dataclass
+class OSVGP(StochasticVI):
+    """
+     Online Sparse Variational GP (uncollapsed bound).
+
+    Key reference - Bui et al. (2017) Streaming Gaussian process approximations
+    """
+
+    posterior: AbstractPosterior
+    variational_family: AbstractVariationalFamily
+    variational_family_old: AbstractVariationalFamily
+    params_old: dict
+    jitter: Optional[float] = DEFAULT_JITTER
+
+    def online_regulariser(self, params: dict) -> Array:
+        # a is old inducing points, b is new.
+        params_old = self.params_old
+
+        # Old and new variational family.
+        q_old = self.variational_family_old
+        q_new = self.variational_family
+
+        # Old number of inducing points.
+        m_old = q_old.num_inducing
+
+        # Old kernel.
+        kernel_old = q_old.prior.kernel
+
+        # Old inducing input locations and corresponding gram matrix:
+        a = self.params_old["variational_family"]["inducing_inputs"]
+        Kaa_old = gram(kernel_old, a, kernel_old.params)
+        Kaa_old += I(m_old) * self.jitter
+        La_old = jnp.linalg.cholesky(Kaa_old)
+
+        # Obtain variational mean, ma, and covariance, Sa, at old inducing inputs, a.
+        if isinstance(q_old, VariationalGaussian):
+            ma = params_old["variational_family"]["variational_mean"]
+            sqrta = params_old["variational_family"]["variational_root_covariance"]
+            Sa = jnp.matmul(sqrta, sqrta.T)
+
+        else:
+            ma, Sa = q_old(params_old)
+            Sa += I(m_old) * self.jitter
+            sqrta = jnp.linalg.cholesky(Sa)
+
+        # a is old inducing points, b is new
+        q_newa = q_new.predict(params)(a)
+        mu, Sigma = q_newa.mean(), q_newa.covariance()
+        Smm = Sigma + jnp.matmul(mu, mu.T)
+        obj = jnp.sum(jnp.log(jnp.diagonal(La_old)))
+        obj += -jnp.sum(jnp.log(jnp.diagonal(sqrta)))
+
+        sqrta_inv_ma = jsp.linalg.solve_triangular(sqrta, ma, lower=True)
+        Sa_inv_ma = jsp.linalg.solve_triangular(sqrta, sqrta_inv_ma, lower=False)
+        obj += -0.5 * jnp.sum(ma * Sa_inv_ma)
+        obj += jnp.sum(mu * Sa_inv_ma)
+
+        sqrta_inv_Smm = jsp.linalg.solve_triangular(sqrta, Smm, lower=True)
+        Sa_inv_Smm = jsp.linalg.solve_triangular(sqrta, sqrta_inv_Smm, lower=False)
+        La_inv_Smm = jsp.linalg.solve_triangular(La_old, Smm, lower=True)
+        Ka_inv_Smm = jsp.linalg.solve_triangular(sqrta, La_inv_Smm, lower=False)
+
+        obj += -0.5 * jnp.sum(jnp.diagonal(Sa_inv_Smm) - jnp.diagonal(Ka_inv_Smm))
+        return obj.squeeze()
+
+    def elbo(
+        self, train_data: Dataset, transformations: Dict, negative: bool = False
+    ) -> Callable[[Array], Array]:
+        """Compute the evidence lower bound under this model. In short, this requires evaluating the expectation of the model's log-likelihood under the variational approximation. To this, we sum the KL divergence from the variational posterior to the prior. When batching occurs, the result is scaled by the batch size relative to the full dataset size.
+
+        Args:
+            train_data (Dataset): The training data for which we should maximise the ELBO with respect to.
+            transformations (Dict): The transformation set that unconstrains each parameter.
+            negative (bool, optional): Whether or not the resultant elbo function should be negative. For gradient descent where we minimise our objective function this argument should be true as minimisation of the negative corresponds to maximisation of the ELBO. Defaults to False.
+
+        Returns:
+            Callable[[Dict, Dataset], Array]: A callable function that accepts a current parameter estimate and batch of data for which gradients should be computed.
+        """
+        constant = jnp.array(-1.0) if negative else jnp.array(1.0)
+
+        def elbo_fn(params: Dict, batch: Dataset) -> Array:
+            params = transform(params, transformations)
+
+            # KL[q(f(·)) || p(f(·))]
+            kl = self.variational_family.prior_kl(params)
+
+            # ∫[log(p(y|f(x))) q(f(x))] df(x)
+            var_exp = self.variational_expectation(params, batch)
+
+            # explain maths
+            online_reg = self.online_regulariser(params)
+
+            # For batch size b, we compute  n/b * Σᵢ[ ∫log(p(y|f(xᵢ))) q(f(xᵢ)) df(xᵢ)] - KL[q(f(·)) || p(f(·))]
+            return constant * (
+                jnp.sum(var_exp) * train_data.n / batch.n - kl + online_reg
+            )
 
         return elbo_fn
