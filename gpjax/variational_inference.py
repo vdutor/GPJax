@@ -19,6 +19,8 @@ from .variational_families import AbstractVariationalFamily, VariationalGaussian
 
 DEFAULT_JITTER = get_defaults()["jitter"]
 
+DEFAULT_JITTER = 1e-4
+
 
 @dataclass
 class AbstractVariationalInference:
@@ -145,8 +147,7 @@ class OSGPR(AbstractVariationalInference):
     def elbo(
         self, transformations: Dict, negative: bool = False
     ) -> Callable[[Array], Array]:
-        # a is old inducing points, b is new
-        # Old params
+        # a is old inducing points, b is new.
         params_old = self.params_old
 
         # Old and new variational family.
@@ -167,7 +168,7 @@ class OSGPR(AbstractVariationalInference):
         Kaa_old += I(m_old) * self.jitter
         La_old = jnp.linalg.cholesky(Kaa_old)
 
-        # Mean and covariance at old variational family inducing inputs:
+        # Obtain variational mean, ma, and covariance, Sa, at old inducing inputs, a.
         if isinstance(q_old, VariationalGaussian):
             ma = params_old["variational_family"]["variational_mean"]
             sqrta = params_old["variational_family"]["variational_root_covariance"]
@@ -180,6 +181,7 @@ class OSGPR(AbstractVariationalInference):
 
         constant = jnp.array(-1.0) if negative else jnp.array(1.0)
 
+        # Compute Sa⁻¹ ma.
         sqrta_inv_ma = jsp.linalg.solve_triangular(sqrta, ma, lower=True)
         Sa_inv_ma = jsp.linalg.solve_triangular(sqrta.T, sqrta_inv_ma, lower=False)
 
@@ -196,7 +198,6 @@ class OSGPR(AbstractVariationalInference):
 
             Kbb = gram(kernel_new, b, params["kernel"])
             Kbb += I(m_new) * self.jitter
-            # Lb Lbᵀ = Kbb
             Lb = jnp.linalg.cholesky(Kbb)
 
             Kbx = cross_covariance(kernel_new, b, x, params["kernel"])
@@ -206,7 +207,7 @@ class OSGPR(AbstractVariationalInference):
 
             diff = y - µx
 
-            # c = 1/σ² Kbx + Kba Sa⁻¹ ma
+            # c = 1/σ² Kbx y + Kba Sa⁻¹ ma
             c = jnp.matmul(Kbx, y / noise) + jnp.matmul(Kba, Sa_inv_ma)
 
             # Lb⁻¹ c
@@ -216,74 +217,79 @@ class OSGPR(AbstractVariationalInference):
             Lb_inv_Kba = jsp.linalg.solve_triangular(Lb, Kba, lower=True)
 
             # Lb⁻¹ Kbx
-            Lb_inv_Kbf = jsp.linalg.solve_triangular(Lb, Kbx, lower=True)
-            d1 = jnp.matmul(Lb_inv_Kbf, Lb_inv_Kbf.T) / noise
+            Lb_inv_Kbx = jsp.linalg.solve_triangular(Lb, Kbx, lower=True)
 
-            # sqrta⁻¹ Kab Lb⁻¹
-            sqrta_inv_Kab_Lb_inv = jsp.linalg.solve_triangular(
+            # 1/σ² Lb⁻¹ Kbx Kxb Lb⁻ᵀ
+            d1 = jnp.matmul(Lb_inv_Kbx, Lb_inv_Kbx.T) / noise
+
+            # sqrta⁻¹ Kab Lb⁻ᵀ
+            sqrta_inv_Kab_Lb_invT = jsp.linalg.solve_triangular(
                 sqrta, Lb_inv_Kba.T, lower=True
             )
-            d2 = jnp.matmul(sqrta_inv_Kab_Lb_inv.T, sqrta_inv_Kab_Lb_inv)
+            # Lb⁻¹ Kba Sa⁻¹ Kab Lb⁻ᵀ
+            d2 = jnp.matmul(sqrta_inv_Kab_Lb_invT.T, sqrta_inv_Kab_Lb_invT)
 
-            # L'a⁻¹ Kab Lb⁻¹
-            La_old_inv_Kab_Lb_inv = jsp.linalg.solve_triangular(
+            # L'a⁻¹ Kab Lb⁻ᵀ
+            La_old_inv_Kab_Lb_invT = jsp.linalg.solve_triangular(
                 La_old, Lb_inv_Kba.T, lower=True
             )
-            d3 = jnp.matmul(La_old_inv_Kab_Lb_inv.T, La_old_inv_Kab_Lb_inv)
 
-            # D = I + 1/σ² Kbx Kxb + Kba Sa⁻¹ Kab - Kba K'aa⁻¹ Kab
+            # Lb⁻¹ Kba K'aa⁻¹ Kab Lb⁻ᵀ
+            d3 = jnp.matmul(La_old_inv_Kab_Lb_invT.T, La_old_inv_Kab_Lb_invT)
+
+            # D = I + Lb⁻¹[1/σ² Kbx Kxb + Kba Sa⁻¹ Kab - Kba K'aa⁻¹ Kab] Lb⁻ᵀ
             D = I(m_new) + d1 + d2 - d3
             D += I(m_new) * self.jitter
-            LD = jnp.linalg.cholesky(D)
 
-            LD_inv_Lb_inv_c = jsp.linalg.solve_triangular(LD, Lb_inv_c, lower=True)
+            # LLᵀ = D
+            L = jnp.linalg.cholesky(D)
+
+            # L⁻¹ Lb⁻¹ c
+            L_inv_Lb_inv_c = jsp.linalg.solve_triangular(L, Lb_inv_c, lower=True)
 
             Kxx_diag = diagonal(kernel_new, x, params["kernel"])
 
-            LSa = jnp.linalg.cholesky(Sa)
-            LSa_inv_ma = jsp.linalg.solve_triangular(LSa, ma, lower=True)
-
             # quadratic term
-            quad = -0.5 * jnp.sum(jnp.square(diff)) / noise
-            quad += -0.5 * jnp.sum(ma * Sa_inv_ma)
-            quad += -0.5 * jnp.sum(jnp.square(LSa_inv_ma))
-            quad += 0.5 * jnp.sum(jnp.square(LD_inv_Lb_inv_c))
 
-            # log det term
-            log_det = -0.5 * n * jnp.sum(jnp.log(noise)) - jnp.sum(
-                jnp.log(jnp.diag(LD))
-            )
+            # -1/2σ² (y - µx)ᵀ(y - µx)
+            quad = -0.5 * jnp.sum(jnp.square(diff)) / noise
+
+            # -1/2 maᵀ Sa⁻¹ ma
+            quad += -0.5 * jnp.sum(jnp.square(sqrta_inv_ma))
+
+            # 1/2 cᵀ Lb⁻ᵀ D⁻¹ Lb⁻¹
+            quad += 0.5 * jnp.sum(jnp.square(L_inv_Lb_inv_c))
+
+            # log |D| = 2 trace(log|L|)
+            log_det = 2 * jnp.sum(jnp.log(jnp.diagonal(L)))
 
             # log probs
-            log_prob = -0.5 * n * jnp.log(2.0 * jnp.pi) + log_det + quad
+            log_prob = -0.5 * n * jnp.log(2.0 * jnp.pi * noise) + quad - 0.5 * log_det
 
-            # ∆1 trace term
-            delta1 = 0.5 * (-jnp.sum(Kxx_diag) / noise + jnp.sum(jnp.diag(d1)))
+            # ∆2 = -1/2 tr(Qx) with Qx:= Kxx - Kxb Kbb⁻¹ Kbx
+            delta2 = -0.5 * (jnp.sum(Kxx_diag) / noise - jnp.sum(jnp.diagonal(d1)))
 
-            # ∆2 trace term
-            delta2 = jnp.sum(jnp.log(jnp.diag(La_old))) - jnp.sum(
-                jnp.log(jnp.diag(sqrta))
+            # ∆1 = log|K'aa| - log|Sa|    [+ log|Da| ??]
+            delta1 = jnp.sum(jnp.log(jnp.diagonal(La_old))) - jnp.sum(
+                jnp.log(jnp.diagonal(sqrta))
             )
 
-            Kaadiff = Kaa - jnp.matmul(Lb_inv_Kba.T, Lb_inv_Kba)
-            sqrta_inv_Kaadiff = jsp.linalg.solve_triangular(sqrta, Kaadiff, lower=True)
-            Sa_inv_Kaadiff = jsp.linalg.solve_triangular(
-                sqrta.T, sqrta_inv_Kaadiff, lower=False
-            )
-            La_inv_Kaadiff = jsp.linalg.solve_triangular(La, Kaadiff, lower=True)
-            Kaa_inv_Kaadiff = jsp.linalg.solve_triangular(
-                La.T, La_inv_Kaadiff, lower=False
-            )
+            # Qa = Kaa - Kab Kbb⁻ᵀ
+            Qa = Kaa - jnp.matmul(Lb_inv_Kba.T, Lb_inv_Kba)
+            sqrta_inv_Qa = jsp.linalg.solve_triangular(sqrta, Qa, lower=True)
 
-            return (
-                constant
-                * (
-                    log_prob
-                    + delta1
-                    + delta2
-                    - 0.5
-                    * jnp.sum(jnp.diag(Sa_inv_Kaadiff) - jnp.diag(Kaa_inv_Kaadiff))
-                ).squeeze()
-            )
+            # Sa⁻¹Qa
+            Sa_inv_Qa = jsp.linalg.solve_triangular(sqrta.T, sqrta_inv_Qa, lower=False)
+
+            # La⁻¹Qa
+            La_inv_Qa = jsp.linalg.solve_triangular(La, Qa, lower=True)
+
+            # Kaa⁻¹Qa
+            Kaa_inv_Qa = jsp.linalg.solve_triangular(La.T, La_inv_Qa, lower=False)
+
+            # tr(Da⁻¹Qa) = tr([Sa⁻¹ - Kaa⁻¹]Qa) = tr(Sa⁻¹Qa) - tr(Kaa⁻¹Qa)
+            delta1 += jnp.sum(jnp.diag(Sa_inv_Qa) - jnp.diag(Kaa_inv_Qa))
+
+            return constant * (log_prob + delta1 + delta2).squeeze()
 
         return elbo_fn
