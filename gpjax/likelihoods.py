@@ -16,6 +16,7 @@ class AbstractLikelihood:
 
     num_datapoints: int  # The number of datapoints that the likelihood factorises over
     name: Optional[str] = "Likelihood"
+    _params: Optional[dict] = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Evaluate the likelihood function at a given predictive distribution."""
@@ -27,10 +28,14 @@ class AbstractLikelihood:
         raise NotImplementedError
 
     @property
-    @abc.abstractmethod
     def params(self) -> dict:
         """Return the parameters of the likelihood function."""
-        raise NotImplementedError
+        return self._params
+
+    @params.setter
+    def params(self, params: dict) -> None:
+        """Set the parameters of the likelihood function."""
+        self._params = params
 
     @property
     @abc.abstractmethod
@@ -55,10 +60,8 @@ class Gaussian(AbstractLikelihood, Conjugate):
 
     name: Optional[str] = "Gaussian"
 
-    @property
-    def params(self) -> dict:
-        """Return the variance parameter of the likelihood function."""
-        return {"obs_noise": jnp.array([1.0])}
+    def __post_init__(self):
+        self._params = {"obs_noise": jnp.array([1.0])}
 
     @property
     def link_function(self) -> Callable:
@@ -84,9 +87,8 @@ class Gaussian(AbstractLikelihood, Conjugate):
 class Bernoulli(AbstractLikelihood, NonConjugate):
     name: Optional[str] = "Bernoulli"
 
-    @property
-    def params(self) -> dict:
-        return {}
+    def __post_init__(self):
+        self._params = {}
 
     @property
     def link_function(self) -> Callable:
